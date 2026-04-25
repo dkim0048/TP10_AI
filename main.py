@@ -4,15 +4,21 @@ import time
 import numpy as np
 from pathlib import Path
 from collections import defaultdict
-from fastapi import FastAPI, Request
+
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
+
+from PIL import Image
+import pytesseract
+import pdf2image
 import wordfreq
+import io
 
-# Load trained model artifact
+# Set the path of the saved logistic regression model artifact
 MODEL_PATH = Path(__file__).parent / "model" / "word_difficulty_model.json"
-
+# Load the saved model artifact from JSON
 try:
     with open(MODEL_PATH, "r") as f:
         artifact = json.load(f)
@@ -24,10 +30,10 @@ except json.JSONDecodeError:
 # Load model weights and configuration
 W = np.array(artifact["w"], dtype=float)
 B = float(artifact["b"])
-
+# Load scaler values used during training
 SCALER_MEAN = np.array(artifact["scaler_mean"], dtype=float)
 SCALER_SCALE = np.array(artifact["scaler_scale"], dtype=float)
-
+# Load prediction threshold, age threshold, and feature order
 BEST_THRESHOLD = float(artifact["best_threshold"])
 THRESHOLD_AGE = float(artifact["threshold_age"])
 FEATURES = artifact["features"]
@@ -41,45 +47,43 @@ HEDGE_BANDS = [
     (1.00, "This word is likely unfamiliar to children aged {age}"),
 ]
 
+# Deployment safety limits
 MAX_WORD_LENGTH = 50
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 RATE_LIMIT_REQUESTS = 60
 RATE_LIMIT_WINDOW = 60  # seconds
 
-# In-memory rate limit store: {ip: [timestamp, ...]}
+# In-memory rate limit store
 _rate_limit_store: dict[str, list[float]] = defaultdict(list)
-
+# Create FastAPI application
 app = FastAPI(title="Lexical Bridge Word Difficulty API")
-
-# CORS middleware
+# Allow frontend requests to access this API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
-
-
-# Rate limiting middleware
+# Simple IP-based rate limiting middleware
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
     ip = request.client.host
     now = time.time()
     window_start = now - RATE_LIMIT_WINDOW
-
+    # Keep only requests made within the current time window
     timestamps = _rate_limit_store[ip]
     timestamps[:] = [t for t in timestamps if t > window_start]
-
+    # Reject request if the client exceeds the request limit
     if len(timestamps) >= RATE_LIMIT_REQUESTS:
         return JSONResponse(
             status_code=429,
             content={"detail": "Too many requests. Please try again later."}
         )
-
+    # Store current request timestamp and continue
     timestamps.append(now)
     return await call_next(request)
 
-
-# Global exception handler
+# Catch unexpected server errors and return a safe response
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
@@ -87,11 +91,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "Internal server error."}
     )
 
-
-# Request body format
+# Request body format for word prediction
 class PredictRequest(BaseModel):
     word: str
-
+    # Validate user input before prediction
     @field_validator("word")
     @classmethod
     def validate_word(cls, v: str) -> str:
@@ -104,8 +107,7 @@ class PredictRequest(BaseModel):
             raise ValueError("word must contain at least one alphabetic character")
         return v
 
-
-# Response body format
+# Response body format for word prediction
 class PredictResponse(BaseModel):
     word: str
     normalized_word: str
@@ -113,11 +115,9 @@ class PredictResponse(BaseModel):
     label: str
     message: str
 
-
 # Extract only lowercase alphabet characters
 def clean_word(word):
     return re.sub(r"[^a-z]", "", str(word).lower().strip())
-
 
 # Estimate syllable count using rule-based vowel group detection
 def estimate_syllables(word):
@@ -127,7 +127,6 @@ def estimate_syllables(word):
     vowels = "aeiouy"
     count = 0
     prev_is_vowel = False
-
     # Count a new syllable when a new vowel group starts
     for ch in w:
         is_vowel = ch in vowels
@@ -137,9 +136,7 @@ def estimate_syllables(word):
     # Remove silent trailing e
     if w.endswith("e") and count > 1:
         count -= 1
-
     return max(count, 1)
-
 
 # Extract linguistic features from a single word
 def build_features(word):
@@ -149,11 +146,9 @@ def build_features(word):
     n_syll_est = estimate_syllables(w)
     zipf_score = wordfreq.zipf_frequency(cw, "en")
     vowels = "aeiouy"
-
     # Calculate vowel ratio
     n_vowels = sum(1 for ch in cw if ch in vowels)
     vowel_ratio = n_vowels / n_letters if n_letters > 0 else 0.0
-
     # Calculate maximum consecutive consonant run
     max_consonant_run = 0
     current_run = 0
@@ -174,7 +169,6 @@ def build_features(word):
     # Return features in the same order used during training
     return np.array([feature_dict[f] for f in FEATURES], dtype=float)
 
-
 # Normalize simple plural or inflected word forms
 def normalize_word_form(word):
     w = clean_word(word)
@@ -192,7 +186,6 @@ def normalize_word_form(word):
         return w[:-1]
     return w
 
-
 # Stable sigmoid function
 def sigmoid(z):
     return np.where(
@@ -201,15 +194,13 @@ def sigmoid(z):
         np.exp(z) / (1.0 + np.exp(z))
     )
 
-
 # Predict difficult probability using saved scaler and logistic regression weights
 def predict_probability(x):
     x_scaled = (x - SCALER_MEAN) / SCALER_SCALE
     z = x_scaled @ W + B
     return float(sigmoid(z))
 
-
-# Map predicted probability to a natural language message
+# Convert predicted probability into a user-friendly message
 def hedge_message(p):
     age = int(THRESHOLD_AGE)
     for upper, message in HEDGE_BANDS:
@@ -217,8 +208,11 @@ def hedge_message(p):
             return message.format(age=age)
     return HEDGE_BANDS[-1][1].format(age=age)
 
+# Extract text from an image using Tesseract OCR
+def extract_text_from_image(image: Image.Image) -> str:
+    return pytesseract.image_to_string(image).strip()
 
-# Health check endpoint
+# Health check endpoint for deployment testing
 @app.get("/")
 def health():
     return {
@@ -226,17 +220,14 @@ def health():
         "message": "Lexical Bridge Word Difficulty API is running"
     }
 
-
-# Prediction endpoint
+# Word difficulty prediction endpoint
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest):
     raw_word = req.word.lower().strip()
     norm_word = normalize_word_form(raw_word)
-
     # Predict probability from the original input word
     raw_features = build_features(raw_word)
     p_raw = predict_probability(raw_features)
-
     # If normalized form is different, also predict using the normalized word
     if norm_word and norm_word != raw_word:
         norm_features = build_features(norm_word)
@@ -244,10 +235,8 @@ def predict(req: PredictRequest):
         p_final = 0.5 * p_raw + 0.5 * p_norm
     else:
         p_final = p_raw
-
     # Classify using the tuned threshold selected during validation
     label = "difficult" if p_final >= BEST_THRESHOLD else "easy"
-
     return PredictResponse(
         word=req.word,
         normalized_word=norm_word,
@@ -255,3 +244,40 @@ def predict(req: PredictRequest):
         label=label,
         message=hedge_message(p_final)
     )
+
+# Image text extraction endpoint
+@app.post("/extract-image")
+async def extract_image(file: UploadFile = File(...)):
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File size must be 10MB or less")
+
+    image = Image.open(io.BytesIO(contents))
+    text = extract_text_from_image(image)
+
+    if not text:
+        raise HTTPException(status_code=422, detail="No text could be extracted from the image")
+
+    return {"text": text}
+
+# PDF text extraction endpoint
+@app.post("/extract-pdf")
+async def extract_pdf(file: UploadFile = File(...)):
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File size must be 10MB or less")
+
+    pages = pdf2image.convert_from_bytes(contents, dpi=200)
+    extracted = [extract_text_from_image(page) for page in pages]
+    text = "\n\n".join(block for block in extracted if block)
+
+    if not text:
+        raise HTTPException(status_code=422, detail="No text could be extracted from the PDF")
+
+    return {"text": text, "pages": len(pages)}
