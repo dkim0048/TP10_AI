@@ -67,7 +67,7 @@ app.add_middleware(
 # Simple IP-based rate limiting middleware
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
-    ip = request.client.host
+    ip = request.client.host if request.client else "unknown"
     now = time.time()
     window_start = now - RATE_LIMIT_WINDOW
     # Keep only requests made within the current time window
@@ -248,7 +248,7 @@ def predict(req: PredictRequest):
 # Image text extraction endpoint
 @app.post("/extract-image")
 async def extract_image(file: UploadFile = File(...)):
-    if not file.content_type.startswith("image/"):
+    if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
 
     contents = await file.read()
@@ -266,7 +266,7 @@ async def extract_image(file: UploadFile = File(...)):
 # PDF text extraction endpoint
 @app.post("/extract-pdf")
 async def extract_pdf(file: UploadFile = File(...)):
-    if file.content_type != "application/pdf":
+    if not file.content_type or file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="File must be a PDF")
 
     contents = await file.read()
