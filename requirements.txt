@@ -7,7 +7,3 @@ scikit-learn
 joblib
 fastapi
 uvicorn[standard]
-pytesseract
-pdf2image
-Pillow
-python-multipart

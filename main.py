@@ -5,16 +5,12 @@ import numpy as np
 from pathlib import Path
 from collections import defaultdict
 
-from fastapi import FastAPI, Request, UploadFile, File, HTTPException
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
-from PIL import Image
-import pytesseract
-import pdf2image
 import wordfreq
-import io
 
 # Set the path of the saved logistic regression model artifact
 MODEL_PATH = Path(__file__).parent / "model" / "word_difficulty_model.json"
@@ -49,7 +45,6 @@ HEDGE_BANDS = [
 
 # Deployment safety limits
 MAX_WORD_LENGTH = 50
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 RATE_LIMIT_REQUESTS = 60
 RATE_LIMIT_WINDOW = 60  # seconds
 
@@ -208,10 +203,6 @@ def hedge_message(p):
             return message.format(age=age)
     return HEDGE_BANDS[-1][1].format(age=age)
 
-# Extract text from an image using Tesseract OCR
-def extract_text_from_image(image: Image.Image) -> str:
-    return pytesseract.image_to_string(image).strip()
-
 # Health check endpoint for deployment testing
 @app.get("/")
 def health():
@@ -245,39 +236,3 @@ def predict(req: PredictRequest):
         message=hedge_message(p_final)
     )
 
-# Image text extraction endpoint
-@app.post("/extract-image")
-async def extract_image(file: UploadFile = File(...)):
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
-
-    contents = await file.read()
-    if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="File size must be 10MB or less")
-
-    image = Image.open(io.BytesIO(contents))
-    text = extract_text_from_image(image)
-
-    if not text:
-        raise HTTPException(status_code=422, detail="No text could be extracted from the image")
-
-    return {"text": text}
-
-# PDF text extraction endpoint
-@app.post("/extract-pdf")
-async def extract_pdf(file: UploadFile = File(...)):
-    if not file.content_type or file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="File must be a PDF")
-
-    contents = await file.read()
-    if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="File size must be 10MB or less")
-
-    pages = pdf2image.convert_from_bytes(contents, dpi=200)
-    extracted = [extract_text_from_image(page) for page in pages]
-    text = "\n\n".join(block for block in extracted if block)
-
-    if not text:
-        raise HTTPException(status_code=422, detail="No text could be extracted from the PDF")
-
-    return {"text": text, "pages": len(pages)}
