@@ -91,7 +91,14 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
-Server runs at `http://127.0.0.1:8000`.
+Server runs at `http://127.0.0.1:8000` (default port when using `--reload`).
+
+## Deployment
+
+| Environment | Start command | URL |
+|---|---|---|
+| Local | `uvicorn main:app --reload` | `http://127.0.0.1:8000` |
+| Render | `uvicorn main:app --host 0.0.0.0 --port $PORT` | https://tp10-ai.onrender.com |
 
 
 ## Architecture Notes
