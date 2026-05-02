@@ -5,14 +5,14 @@ import numpy as np
 from pathlib import Path
 from collections import defaultdict
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
 import wordfreq
 
-# Set the path of the saved logistic regression model artifact
+# Set the path of the saved ridge regression model artifact
 MODEL_PATH = Path(__file__).parent / "model" / "word_difficulty_model.json"
 # Load the saved model artifact from JSON
 try:
@@ -29,19 +29,24 @@ B = float(artifact["b"])
 # Load scaler values used during training
 SCALER_MEAN = np.array(artifact["scaler_mean"], dtype=float)
 SCALER_SCALE = np.array(artifact["scaler_scale"], dtype=float)
-# Load prediction threshold, age threshold, and feature order
-BEST_THRESHOLD = float(artifact["best_threshold"])
-THRESHOLD_AGE = float(artifact["threshold_age"])
+# Load target age and AoA clamp range
+TARGET_AGE = float(artifact["target_age"])
+MIN_PRED_AOA = float(artifact["min_pred_aoa"])
+MAX_PRED_AOA = float(artifact["max_pred_aoa"])
 FEATURES = artifact["features"]
+if artifact.get("model_type") != "ridge_regression":
+    raise RuntimeError("Invalid model artifact: expected ridge_regression")
 
-# Output message based on predicted probability
-HEDGE_BANDS = [
-    (0.25, "Most children aged {age} would likely know this word"),
-    (0.40, "Children aged {age} would likely know this word"),
-    (0.60, "This word may or may not be familiar to children aged {age}"),
-    (0.75, "This word may be unfamiliar to children aged {age}"),
-    (1.00, "This word is likely unfamiliar to children aged {age}"),
-]
+if W.shape[0] != len(FEATURES):
+    raise RuntimeError(
+        f"Model feature mismatch: weights={W.shape[0]}, features={len(FEATURES)}"
+    )
+
+if SCALER_MEAN.shape[0] != len(FEATURES) or SCALER_SCALE.shape[0] != len(FEATURES):
+    raise RuntimeError("Scaler feature mismatch with feature list")
+
+if np.any(SCALER_SCALE == 0):
+    raise RuntimeError("Scaler contains zero scale value")
 
 # Deployment safety limits
 MAX_WORD_LENGTH = 50
@@ -106,8 +111,8 @@ class PredictRequest(BaseModel):
 class PredictResponse(BaseModel):
     word: str
     normalized_word: str
-    probability: float
-    label: str
+    predicted_aoa: float
+    category: str
     message: str
 
 # Extract only lowercase alphabet characters
@@ -135,10 +140,9 @@ def estimate_syllables(word):
 
 # Extract linguistic features from a single word
 def build_features(word):
-    w = str(word).lower().strip()
-    cw = clean_word(w)
+    cw = clean_word(word)
     n_letters = len(cw)
-    n_syll_est = estimate_syllables(w)
+    n_syll_est = estimate_syllables(cw)
     zipf_score = wordfreq.zipf_frequency(cw, "en")
     vowels = "aeiouy"
     # Calculate vowel ratio
@@ -170,38 +174,53 @@ def normalize_word_form(word):
     if not w:
         return w
 
-    # Convert -ies to -y, for example babies -> baby
     if len(w) > 4 and w.endswith("ies"):
         return w[:-3] + "y"
-    # Remove -es, for example boxes -> box
-    if len(w) > 4 and w.endswith("es") and w.endswith(("ses", "xes", "zes", "ches", "shes")):
+
+    if len(w) > 4 and w.endswith(("ses", "xes", "zes", "ches", "shes")):
         return w[:-2]
-    # Remove plural -s, for example cats -> cat
-    if len(w) > 3 and w.endswith("s") and not w.endswith("ss") and not w.endswith("sis"):
+
+    if (
+        len(w) > 4
+        and w.endswith("s")
+        and not w.endswith(("ss", "sis", "ous", "us", "is"))
+    ):
         return w[:-1]
+
     return w
 
-# Stable sigmoid function
-def sigmoid(z):
-    return np.where(
-        z >= 0,
-        1.0 / (1.0 + np.exp(-z)),
-        np.exp(z) / (1.0 + np.exp(z))
-    )
-
-# Predict difficult probability using saved scaler and logistic regression weights
-def predict_probability(x):
+# Predict continuous AoA using saved scaler and ridge regression weights
+def predict_aoa(x):
     x_scaled = (x - SCALER_MEAN) / SCALER_SCALE
-    z = x_scaled @ W + B
-    return float(sigmoid(z))
+    raw = float(x_scaled @ W + B)
+    return float(np.clip(raw, MIN_PRED_AOA, MAX_PRED_AOA))
 
-# Convert predicted probability into a user-friendly message
-def hedge_message(p):
-    age = int(THRESHOLD_AGE)
-    for upper, message in HEDGE_BANDS:
-        if p < upper:
-            return message.format(age=age)
-    return HEDGE_BANDS[-1][1].format(age=age)
+# Convert predicted AoA into a broad difficulty category
+def aoa_category(pred_aoa):
+    diff = pred_aoa - TARGET_AGE
+    if diff <= -2.0:
+        return "very_likely_familiar"
+    if diff <= -0.5:
+        return "likely_familiar"
+    if diff < 0.5:
+        return "around_target_age"
+    if diff < 2.0:
+        return "likely_unfamiliar"
+    return "very_likely_unfamiliar"
+
+# Convert predicted AoA into a user-friendly message
+def aoa_message(pred_aoa):
+    diff = pred_aoa - TARGET_AGE
+    age = int(TARGET_AGE)
+    if diff <= -2.0:
+        return f"Most children aged {age} would likely know this word"
+    if diff <= -0.5:
+        return f"Children aged {age} would likely know this word"
+    if diff < 0.5:
+        return f"This word may be around the expected level for children aged {age}"
+    if diff < 2.0:
+        return f"This word may be unfamiliar to children aged {age}"
+    return f"This word is likely unfamiliar to children aged {age}"
 
 # Health check endpoint for deployment testing
 @app.get("/")
@@ -215,24 +234,24 @@ def health():
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest):
     raw_word = req.word.lower().strip()
+    cleaned_word = clean_word(raw_word)
     norm_word = normalize_word_form(raw_word)
-    # Predict probability from the original input word
-    raw_features = build_features(raw_word)
-    p_raw = predict_probability(raw_features)
-    # If normalized form is different, also predict using the normalized word
-    if norm_word and norm_word != raw_word:
+
+    raw_features = build_features(cleaned_word)
+    aoa_raw = predict_aoa(raw_features)
+
+    if norm_word and norm_word != cleaned_word:
         norm_features = build_features(norm_word)
-        p_norm = predict_probability(norm_features)
-        p_final = 0.5 * p_raw + 0.5 * p_norm
+        aoa_norm = predict_aoa(norm_features)
+        aoa_final = round(0.5 * aoa_raw + 0.5 * aoa_norm, 2)
     else:
-        p_final = p_raw
-    # Classify using the tuned threshold selected during validation
-    label = "difficult" if p_final >= BEST_THRESHOLD else "easy"
+        aoa_final = round(aoa_raw, 2)
+
     return PredictResponse(
         word=req.word,
         normalized_word=norm_word,
-        probability=round(p_final, 4),
-        label=label,
-        message=hedge_message(p_final)
+        predicted_aoa=aoa_final,
+        category=aoa_category(aoa_final),
+        message=aoa_message(aoa_final)
     )
 
