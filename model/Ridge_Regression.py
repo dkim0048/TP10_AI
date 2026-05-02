@@ -58,10 +58,6 @@ PARAMETERS = {
     'perc_known_min': 0.3,
     'test_size': 0.2,
     'val_size': 0.2,
-    'alpha': 0.001,
-    'lr': 0.001,
-    'epochs': 3000,
-    'log_interval': 100,
     'min_pred_aoa': 1.0,
     'max_pred_aoa': 20.0,
 }
@@ -406,6 +402,14 @@ def predict_word(word, clf, scaler, target_age):
 
     print(f'{word:<20} predicted_AoA={pred_final:<6.2f} {category:<24} {message}')
 
+TRAINING_PARAMETERS = {
+    'alpha': 0.001,
+    'lr': 0.001,
+    'epochs': 3000,
+    'log_interval': 500,
+    'k_folds': 5,
+}
+
 # Fit scaler on training data only
 scaler_train = StandardScaler().fit(X_train)
 
@@ -414,10 +418,10 @@ Xtr_s = scaler_train.transform(X_train)
 Xval_s = scaler_train.transform(X_val)
 
 # Use fixed Ridge Regression configuration from PARAMETERS
-selected_alpha = PARAMETERS['alpha']
-selected_lr = PARAMETERS['lr']
+selected_alpha = TRAINING_PARAMETERS['alpha']
+selected_lr = TRAINING_PARAMETERS['lr']
 
-print('Training Ridge Regression model with fixed configuration:\n')
+print('Training Ridge Regression model\n')
 print(f'alpha: {selected_alpha}')
 print(f'learning rate: {selected_lr}\n')
 
@@ -425,16 +429,15 @@ print(f'learning rate: {selected_lr}\n')
 best_model = RidgeRegression(
     alpha=selected_alpha,
     lr=selected_lr,
-    epochs=PARAMETERS['epochs']
+    epochs=TRAINING_PARAMETERS['epochs']
 )
-
 # Train model and monitor validation performance
 best_model.fit(
     Xtr_s,
     y_train,
     X_val=Xval_s,
     y_val=y_val,
-    print_every=PARAMETERS['log_interval']
+    print_every=TRAINING_PARAMETERS['log_interval']
 )
 
 # Predict validation AoA
@@ -456,6 +459,114 @@ print('\nValidation regression performance:')
 print(f'MAE : {val_mae:.3f}')
 print(f'RMSE: {val_rmse:.3f}')
 print(f'R²  : {val_r2:.3f}')
+
+# Custom LFold cross-validation splitter
+class LFold:
+    def __init__(self, n_splits, random_state=None, shuffle=True):
+        self.n_splits = n_splits
+        self.random_state = random_state
+        self.shuffle = shuffle
+
+    def split(self, X):
+        # Generate train and validation indices for each fold
+        n_samples = len(X)
+        indices = np.arange(n_samples)
+
+        if self.shuffle:
+            rng = np.random.default_rng(self.random_state)
+            rng.shuffle(indices)
+
+        fold_sizes = np.full(self.n_splits, n_samples // self.n_splits, dtype=int)
+        fold_sizes[:n_samples % self.n_splits] += 1
+        current = 0
+
+        # Generate train and validation indices for each fold
+        for fold_size in fold_sizes:
+            start = current
+            stop = current + fold_size
+
+            # Current fold is used as validation data
+            val_idx = indices[start:stop]
+            train_idx = np.concatenate([indices[:start], indices[stop:]])
+
+            yield train_idx, val_idx
+
+            current = stop
+
+# Custom L-fold cross-validation to check model stability across different splits
+kf = LFold(
+    n_splits=TRAINING_PARAMETERS['k_folds'],
+    shuffle=True,
+    random_state=PARAMETERS['seed']
+)
+
+# Store evaluation scores from each fold
+cv_mae_scores = []
+cv_rmse_scores = []
+cv_r2_scores = []
+print(f"{TRAINING_PARAMETERS['k_folds']}-fold cross-validation:\n")
+
+# Run cross-validation only on the training-validation data
+for fold, (train_idx, val_idx) in enumerate(kf.split(X_trainval), start=1):
+    # Select fold-specific training and validation data
+    X_fold_train = X_trainval[train_idx]
+    X_fold_val = X_trainval[val_idx]
+    y_fold_train = y_trainval[train_idx]
+    y_fold_val = y_trainval[val_idx]
+
+    # Fit scaler only on the current fold training data
+    fold_scaler = StandardScaler().fit(X_fold_train)
+    X_fold_train_s = fold_scaler.transform(X_fold_train)
+    X_fold_val_s = fold_scaler.transform(X_fold_val)
+
+    # Train a new Ridge model for this fold
+    fold_model = RidgeRegression(
+        alpha=TRAINING_PARAMETERS['alpha'],
+        lr=TRAINING_PARAMETERS['lr'],
+        epochs=TRAINING_PARAMETERS['epochs']
+    )
+
+    # Fit the fold model and monitor its validation performance
+    fold_model.fit(
+        X_fold_train_s,
+        y_fold_train,
+        X_val=X_fold_val_s,
+        y_val=y_fold_val,
+        print_every=TRAINING_PARAMETERS['epochs'] + 1
+    )
+
+    # Predict validation fold AoA
+    fold_preds = fold_model.predict(X_fold_val_s)
+
+    # Clip predictions into the same realistic AoA range
+    fold_preds = np.clip(
+        fold_preds,
+        PARAMETERS['min_pred_aoa'],
+        PARAMETERS['max_pred_aoa']
+    )
+
+    # Calculate fold metrics
+    fold_mae = mean_absolute_error(y_fold_val, fold_preds)
+    fold_rmse = np.sqrt(mean_squared_error(y_fold_val, fold_preds))
+    fold_r2 = r2_score(y_fold_val, fold_preds)
+
+    # Save fold scores for summary statistics
+    cv_mae_scores.append(fold_mae)
+    cv_rmse_scores.append(fold_rmse)
+    cv_r2_scores.append(fold_r2)
+
+    print(
+        f"Fold {fold}: "
+        f"MAE={fold_mae:.3f}, "
+        f"RMSE={fold_rmse:.3f}, "
+        f"R²={fold_r2:.3f}"
+    )
+
+# Print average performance and variation across folds
+print("\nCross-validation summary:")
+print(f"MAE : {np.mean(cv_mae_scores):.3f} ± {np.std(cv_mae_scores):.3f}")
+print(f"RMSE: {np.mean(cv_rmse_scores):.3f} ± {np.std(cv_rmse_scores):.3f}")
+print(f"R²  : {np.mean(cv_r2_scores):.3f} ± {np.std(cv_r2_scores):.3f}")
 
 # Use the trained model and training scaler as the final model objects
 scaler = scaler_train
