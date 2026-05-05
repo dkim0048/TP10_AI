@@ -60,7 +60,7 @@ app = FastAPI(title="Lexical Bridge Word Difficulty API")
 # Allow frontend requests to access this API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://dysletp10.vercel.app"],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -116,11 +116,11 @@ class PredictResponse(BaseModel):
     message: str
 
 # Extract only lowercase alphabet characters
-def clean_word(word):
+def clean_word(word: str) -> str:
     return re.sub(r"[^a-z]", "", str(word).lower().strip())
 
 # Estimate syllable count using rule-based vowel group detection
-def estimate_syllables(word):
+def estimate_syllables(word: str) -> int:
     w = clean_word(word)
     if not w:
         return 1
@@ -139,7 +139,7 @@ def estimate_syllables(word):
     return max(count, 1)
 
 # Extract linguistic features from a single word
-def build_features(word):
+def build_features(word: str) -> np.ndarray:
     cw = clean_word(word)
     n_letters = len(cw)
     n_syll_est = estimate_syllables(cw)
@@ -169,7 +169,7 @@ def build_features(word):
     return np.array([feature_dict[f] for f in FEATURES], dtype=float)
 
 # Normalize simple plural or inflected word forms
-def normalize_word_form(word):
+def normalize_word_form(word: str) -> str:
     w = clean_word(word)
     if not w:
         return w
@@ -190,13 +190,13 @@ def normalize_word_form(word):
     return w
 
 # Predict continuous AoA using saved scaler and ridge regression weights
-def predict_aoa(x):
+def predict_aoa(x: np.ndarray) -> float:
     x_scaled = (x - SCALER_MEAN) / SCALER_SCALE
     raw = float(x_scaled @ W + B)
     return float(np.clip(raw, MIN_PRED_AOA, MAX_PRED_AOA))
 
 # Convert predicted AoA into a broad difficulty category
-def aoa_category(pred_aoa):
+def aoa_category(pred_aoa: float) -> str:
     diff = pred_aoa - TARGET_AGE
     if diff <= -2.0:
         return "very_likely_familiar"
@@ -209,7 +209,7 @@ def aoa_category(pred_aoa):
     return "very_likely_unfamiliar"
 
 # Convert predicted AoA into a user-friendly message
-def aoa_message(pred_aoa):
+def aoa_message(pred_aoa: float) -> str:
     diff = pred_aoa - TARGET_AGE
     age = int(TARGET_AGE)
     if diff <= -2.0:
@@ -224,7 +224,7 @@ def aoa_message(pred_aoa):
 
 # Health check endpoint for deployment testing
 @app.get("/")
-def health():
+def health() -> dict[str, str]:
     return {
         "status": "ok",
         "message": "Lexical Bridge Word Difficulty API is running"
