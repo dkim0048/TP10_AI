@@ -165,6 +165,14 @@ uvicorn main:app --reload
 http://127.0.0.1:8000
 ```
 
+## Deployment
+
+The word difficulty API is deployed on Render and publicly accessible at:
+
+```text
+https://tp10-ai.onrender.com
+```
+
 ---
 
 ## Tech Stack
