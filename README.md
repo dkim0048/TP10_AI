@@ -1,18 +1,18 @@
 # TP10 AI
 
-AI components for the Lexical Bridge application — a reading support tool designed for children with dyslexia.
+AI components for the Lexical Bridge application - a parent-facing reading support tool for children who experience dyslexia-related reading difficulties.
 
-This repository contains three AI modules, each addressing a different feature of the product.
+This repository contains three AI components, each supporting a different feature area of the product.
 
 ---
 
 ## Background
 
-Parents of children with dyslexia often face a common problem: when their child struggles with a word, it is hard to tell whether the difficulty comes from dyslexia itself or whether the word is simply hard for most children that age. Without a reference point, parents cannot easily distinguish between the two.
+Parents of children who experience dyslexia-related reading difficulties often face a common problem: when their child struggles with a word, it can be hard to tell whether the word reflects an individual reading difficulty or whether it is generally unfamiliar for children around the same age. Without a reference point, parents may find it difficult to decide how to support the child during reading.
 
-Beyond that, many parents want to read alongside their child but lack suitable materials, and children with reading difficulties often avoid reading altogether — making sustained engagement a key challenge.
+Beyond individual word difficulty, parents may also want to read with their child but lack suitable reading materials. At the same time, children who experience reading difficulties may avoid reading tasks when they feel stressful or discouraging, making sustained engagement an important challenge.
 
-The three modules in this repository each address one of these problems.
+The three modules in this repository address these needs through word difficulty prediction, reading library organization, and photo-based engagement.
 
 ---
 
@@ -63,11 +63,11 @@ photo_mission_image_classification/
 
 ## Word Difficulty Model
 
-**Problem:** When a child struggles with a word, parents cannot easily tell whether it is because of dyslexia or because the word is genuinely difficult for most children that age. This makes it hard to offer the right kind of support.
+**Problem:** When a child struggles with a word, parents may find it difficult to tell whether the word is part of their child’s individual reading struggle or whether it is generally unfamiliar for children around the same age. This can make it harder to decide what kind of support to provide.
 
-**Solution:** A parent types in a word, and the model estimates how difficult it generally is for children around a given age, based on Age of Acquisition (AoA) data. The output is a broad, cautious category — not a diagnosis — that helps parents understand whether the word is expected to be hard for most kids or not.
+**Solution:** A parent enters a word, and the model estimates how difficult the word is likely to be for children around a selected age level, based on Age of Acquisition (AoA) data. The output is a broad, cautious category, not a diagnosis that helps parents understand whether the word may be commonly familiar or unfamiliar for children at that age.
 
-The model is trained on AoA data using Ridge Regression and deployed as a FastAPI service on Render. It uses only word-level features that can be extracted from a single input word, with no sentence context or child-specific data required.
+The model is trained on AoA data using Ridge Regression and is deployed as a FastAPI service on Render. It uses only word-level features that can be extracted from a single input word, with no sentence context or child-specific data required.
 
 **Features used:**
 
@@ -95,12 +95,12 @@ See [`word_difficulty_model/`](./word_difficulty_model/) for training details.
 
 ## Library Clustering
 
-**Problem:** Parents who want to read alongside their child often lack suitable reading material — content that is age-appropriate, accessible, and actually available.
+**Problem:** Parents who want to read with their child may not always have suitable reading materials prepared, especially content that is accessible, engaging, and legally reusable within the application.
 
-**Solution:** An in-app reading library built from the open [GlotStoryBook](https://github.com/cisnlp/GlotStoryBook) dataset. Stories are filtered to English-language, CC-BY licensed texts of at least 50 words, then organized by topic and reading difficulty so parents can quickly find a story that fits.
+**Solution:** An in app reading library built from the open [GlotStoryBook](https://github.com/cisnlp/GlotStoryBook) dataset. Stories are filtered to English-language, CC-BY licensed texts of at least 50 words, then organised by topic and reading difficulty so parents can quickly find story materials that fit the reading session.
 
 - **Dataset:** GlotStoryBook (English, CC-BY, ≥ 50 words)
-- **Topic clustering:** Hard-EM and Soft-EM on a bag-of-words document-term matrix (K=8 clusters, manually mapped to 3 categories)
+- **Topic clustering:** Hard EM and Soft EM on a bag-of-words document-term matrix (K=8 clusters, manually mapped to 3 categories)
 - **Difficulty levels:** Dale-Chall Readability Score → Level 1 / 2 / 3
 - **Output:** `stories_final.json` structured by category and difficulty, ready for frontend import
 
@@ -112,13 +112,13 @@ See [`library_clustering/`](./library_clustering/) for details.
 
 ## Photo Mission Image Classification
 
-**Problem:** Children with reading difficulties often avoid reading as a coping strategy, making sustained engagement difficult.
+**Problem:** Children with reading difficulties may avoid reading tasks when they feel difficult or stressful, which can make sustained engagement challenging.
 
-**Solution:** A photo-taking game that encourages interaction without putting reading at the centre. A child is given a prompt to photograph a specific object, and the model checks whether the uploaded image matches the requested class. This serves as an engagement mechanic that keeps children active in the app without requiring them to read.
+**Solution:** A photo taking challenge that introduces a playful activity before or alongside reading. The child is given a prompt to photograph a specific object, and the model checks whether the uploaded image matches the requested class. This works as an engagement mechanic that helps children stay active in the app while reducing pressure around reading.
 
 **Classes:** `cat` · `dog` · `bird` · `flower` · `fruit` · `vegetable` · `car` · `bicycle` · `shoe`
 
-**Architecture:** 4-block CNN (Conv2d → ReLU → MaxPool) + fully connected classifier, trained with CrossEntropyLoss and Adam.
+**Architecture:** Basic 4-block CNN baseline: Conv2d → ReLU → MaxPool, followed by a fully connected classifier. The model is trained with CrossEntropyLoss and Adam.
 
 See [`photo_mission_image_classification/`](./photo_mission_image_classification/) for details.
 
@@ -163,14 +163,6 @@ uvicorn main:app --reload
 
 ```text
 http://127.0.0.1:8000
-```
-
-## Deployment
-
-The word difficulty API is deployed on Render and publicly accessible at:
-
-```text
-https://tp10-ai.onrender.com
 ```
 
 ---
