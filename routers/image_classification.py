@@ -28,37 +28,63 @@ CATEGORY_MAP = {
     "shoe": "daily_life",
 }
 
-IMG_SIZE = 128
+IMG_SIZE = 224
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, downsample: bool = True):
+        super().__init__()
+        stride = 2 if downsample else 1
+        self.conv_block = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+        )
+        self.shortcut = nn.Sequential()
+        if downsample or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride),
+                nn.BatchNorm2d(out_channels),
+            )
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.relu(self.conv_block(x) + self.shortcut(x))
 
 
 class BaselineCNN(nn.Module):
     def __init__(self, num_classes: int = 9):
         super().__init__()
-        self.features = nn.Sequential(
+        self.stem = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
         )
+        self.features = nn.Sequential(
+            ResidualBlock(32, 64, downsample=True),
+            ResidualBlock(64, 128, downsample=True),
+            ResidualBlock(128, 256, downsample=True),
+            ResidualBlock(256, 512, downsample=True),
+        )
+        self.gap = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(256 * 8 * 8, 128),
+            nn.Dropout(0.3),
+            nn.Linear(512, 256),
             nn.ReLU(inplace=True),
-            nn.Linear(128, num_classes),
+            nn.Dropout(0.2),
+            nn.Linear(256, num_classes),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.classifier(self.features(x))
+        x = self.stem(x)
+        x = self.features(x)
+        x = self.gap(x)
+        return self.classifier(x)
 
 
 try:
