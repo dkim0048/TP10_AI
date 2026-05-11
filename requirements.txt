@@ -1,13 +1,9 @@
 wordfreq
 numpy
-pandas
-matplotlib
-seaborn
-scikit-learn
-joblib
 fastapi
 uvicorn[standard]
 python-multipart
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch
 torchvision
 Pillow

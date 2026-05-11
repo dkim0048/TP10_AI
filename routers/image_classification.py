@@ -88,7 +88,7 @@ class BaselineCNN(nn.Module):
 
 
 try:
-    _checkpoint = torch.load(MODEL_PATH, map_location="cpu")
+    _checkpoint = torch.load(MODEL_PATH, map_location="cpu", weights_only=False)
     CLASS_NAMES: list[str] = _checkpoint["class_names"]
 
     _cnn = BaselineCNN(num_classes=len(CLASS_NAMES))

@@ -8,7 +8,7 @@ from pydantic import BaseModel, field_validator
 
 import wordfreq
 
-MODEL_PATH = Path(__file__).parent.parent / "model" / "word_difficulty_model.json"
+MODEL_PATH = Path(__file__).parent.parent / "word_difficulty_model" / "model" / "word_difficulty_model.json"
 try:
     with open(MODEL_PATH, "r") as f:
         artifact = json.load(f)
