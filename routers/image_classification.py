@@ -17,15 +17,22 @@ MODEL_PATH = (
 )
 
 CATEGORY_MAP = {
-    "cat": "animal",
-    "dog": "animal",
-    "bird": "animal",
-    "flower": "nature",
-    "fruit": "nature",
-    "vegetable": "nature",
-    "car": "daily_life",
-    "bicycle": "daily_life",
-    "shoe": "daily_life",
+    "cat": "animals",
+    "horse": "animals",
+    "bird": "animals",
+    "fish": "animals",
+    "books": "daily_life",
+    "chair": "daily_life",
+    "umbrella": "daily_life",
+    "airplane": "vehicles",
+    "bicycle": "vehicles",
+    "boat": "vehicles",
+}
+
+THEME_LABELS: dict[str, str] = {
+    "animals": "Animals",
+    "daily_life": "Everyday Life",
+    "vehicles": "Explore",
 }
 
 IMG_SIZE = 224
@@ -57,7 +64,7 @@ class ResidualBlock(nn.Module):
 
 
 class BaselineCNN(nn.Module):
-    def __init__(self, num_classes: int = 9):
+    def __init__(self, num_classes: int = 10):
         super().__init__()
         self.stem = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, padding=1),
@@ -115,7 +122,17 @@ router = APIRouter(prefix="/image")
 class ClassifyResponse(BaseModel):
     predicted_class: str
     category: str
+    theme: str
     confidence: float
+
+
+class ThemeItem(BaseModel):
+    id: str
+    label: str
+
+
+class ThemesResponse(BaseModel):
+    themes: list[ThemeItem]
 
 
 @router.post("/classify", response_model=ClassifyResponse)
@@ -139,9 +156,18 @@ async def classify_image(file: UploadFile = File(...)):
 
     predicted_class = CLASS_NAMES[pred_idx.item()]
     category = CATEGORY_MAP.get(predicted_class, "unknown")
+    theme = THEME_LABELS.get(category, "Unknown")
 
     return ClassifyResponse(
         predicted_class=predicted_class,
         category=category,
+        theme=theme,
         confidence=round(confidence.item(), 4),
+    )
+
+
+@router.get("/themes", response_model=ThemesResponse)
+def get_themes():
+    return ThemesResponse(
+        themes=[ThemeItem(id=k, label=v) for k, v in THEME_LABELS.items()]
     )

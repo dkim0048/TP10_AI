@@ -53,10 +53,12 @@ photo_mission_image_classification/
 │   ├── notebooks/                               # Dataset collection and analysis
 │   └── src/                                     # Data collection and analysis scripts
 └── cnn/
-    └── training/
-        └── baseline/
-            ├── cnn_baseline.py                  # Training script
-            └── cnn_baseline.ipynb               # Training notebook (Google Colab)
+    ├── model/                                   # Trained model checkpoint (.pth)
+    ├── notebooks/
+    │   └── final_residual_cnn.ipynb             # Final training notebook (Google Colab)
+    ├── src/
+    │   └── final_residual_cnn.py                # Training script
+    └── training/                                # Experiment history (baseline → t5_residual)
 ```
 
 ---
@@ -116,17 +118,23 @@ See [`library_clustering/`](./library_clustering/) for details.
 
 **Solution:** A photo taking challenge that introduces a playful activity before or alongside reading. The child is given a prompt to photograph a specific object, and the model checks whether the uploaded image matches the requested class. This works as an engagement mechanic that helps children stay active in the app while reducing pressure around reading.
 
-**Classes:** `cat` · `dog` · `bird` · `flower` · `fruit` · `vegetable` · `car` · `bicycle` · `shoe`
+**Classes:** `cat` · `horse` · `bird` · `fish` · `books` · `chair` · `umbrella` · `airplane` · `bicycle` · `boat`
 
-**Architecture:** Basic 4-block CNN baseline: Conv2d → ReLU → MaxPool, followed by a fully connected classifier. The model is trained with CrossEntropyLoss and Adam.
+**Categories:** `animals` · `daily_life` · `vehicles`
+
+**Themes (child-facing):** `Animals` · `Everyday Life` · `Explore`
+
+**Architecture:** 4-block Residual CNN (stem conv → 4× ResidualBlock → Global Average Pooling → classifier). Trained with CrossEntropyLoss, AdamW, and cosine annealing LR schedule. Best validation accuracy: 80.5%.
 
 See [`photo_mission_image_classification/`](./photo_mission_image_classification/) for details.
 
 ---
 
-## API (Word Difficulty)
+## API
 
-The word difficulty model is served via FastAPI.
+The word difficulty and image classification models are served via FastAPI.
+
+Rate limit: 60 requests per minute per IP.
 
 ### `GET /`
 
@@ -150,7 +158,54 @@ Health check.
 }
 ```
 
-Rate limit: 60 requests per minute per IP.
+### `POST /predict/batch`
+
+**Request**
+```json
+{ "words": ["cat", "elephant", "umbrella"] }
+```
+
+**Response**
+```json
+{
+  "results": [
+    { "word": "cat",      "category": "very_likely_familiar" },
+    { "word": "elephant", "category": "likely_unfamiliar" },
+    { "word": "umbrella", "category": "around_target_age" }
+  ]
+}
+```
+
+Maximum 100 words per request.
+
+### `POST /image/classify`
+
+Accepts a multipart image upload. Returns the predicted class, internal category, child-facing theme, and confidence score.
+
+**Response**
+```json
+{
+  "predicted_class": "cat",
+  "category": "animals",
+  "theme": "Animals",
+  "confidence": 0.9234
+}
+```
+
+### `GET /image/themes`
+
+Returns all available reading themes for manual selection.
+
+**Response**
+```json
+{
+  "themes": [
+    { "id": "animals",    "label": "Animals" },
+    { "id": "daily_life", "label": "Everyday Life" },
+    { "id": "vehicles",   "label": "Explore" }
+  ]
+}
+```
 
 ---
 
