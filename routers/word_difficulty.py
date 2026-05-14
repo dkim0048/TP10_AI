@@ -64,6 +64,31 @@ class PredictResponse(BaseModel):
     message: str
 
 
+MAX_BATCH_SIZE = 100
+
+
+class BatchPredictRequest(BaseModel):
+    words: list[str]
+
+    @field_validator("words")
+    @classmethod
+    def validate_words(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("words must not be empty")
+        if len(v) > MAX_BATCH_SIZE:
+            raise ValueError(f"words must contain {MAX_BATCH_SIZE} items or fewer")
+        return v
+
+
+class BatchPredictResult(BaseModel):
+    word: str
+    category: str
+
+
+class BatchPredictResponse(BaseModel):
+    results: list[BatchPredictResult]
+
+
 def clean_word(word: str) -> str:
     return re.sub(r"[^a-z]", "", str(word).lower().strip())
 
@@ -161,17 +186,8 @@ def aoa_message(pred_aoa: float) -> str:
     return f"This word is likely unfamiliar to children aged {age}"
 
 
-@router.get("/")
-def health() -> dict[str, str]:
-    return {
-        "status": "ok",
-        "message": "Lexical Bridge Word Difficulty API is running",
-    }
-
-
-@router.post("/predict", response_model=PredictResponse)
-def predict(req: PredictRequest):
-    raw_word = req.word.lower().strip()
+def _predict_single(word: str) -> tuple[float, str]:
+    raw_word = word.lower().strip()
     cleaned_word = clean_word(raw_word)
     norm_word = normalize_word_form(raw_word)
 
@@ -185,6 +201,20 @@ def predict(req: PredictRequest):
     else:
         aoa_final = round(aoa_raw, 2)
 
+    return aoa_final, norm_word
+
+
+@router.get("/")
+def health() -> dict[str, str]:
+    return {
+        "status": "ok",
+        "message": "Lexical Bridge Word Difficulty API is running",
+    }
+
+
+@router.post("/predict", response_model=PredictResponse)
+def predict(req: PredictRequest):
+    aoa_final, norm_word = _predict_single(req.word)
     return PredictResponse(
         word=req.word,
         normalized_word=norm_word,
@@ -192,3 +222,16 @@ def predict(req: PredictRequest):
         category=aoa_category(aoa_final),
         message=aoa_message(aoa_final),
     )
+
+
+@router.post("/predict/batch", response_model=BatchPredictResponse)
+def predict_batch(req: BatchPredictRequest):
+    results = []
+    for word in req.words:
+        try:
+            validated = PredictRequest(word=word)
+            aoa_final, _ = _predict_single(validated.word)
+            results.append(BatchPredictResult(word=word, category=aoa_category(aoa_final)))
+        except Exception:
+            results.append(BatchPredictResult(word=word, category="unknown"))
+    return BatchPredictResponse(results=results)
