@@ -35,6 +35,8 @@ THEME_LABELS: dict[str, str] = {
     "vehicles": "Explore",
 }
 
+CONFIDENCE_THRESHOLD = 0.6
+
 IMG_SIZE = 224
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
@@ -120,9 +122,11 @@ router = APIRouter(prefix="/image")
 
 
 class ClassifyResponse(BaseModel):
-    predicted_class: str
-    category: str
-    theme: str
+    recognized: bool
+    message: str
+    predicted_class: str | None
+    category: str | None
+    theme: str | None
     confidence: float
 
 
@@ -155,14 +159,28 @@ async def classify_image(file: UploadFile = File(...)):
         confidence, pred_idx = probs.max(1)
 
     predicted_class = CLASS_NAMES[pred_idx.item()]
+    confidence_val = round(confidence.item(), 4)
+
+    if confidence_val < CONFIDENCE_THRESHOLD:
+        return ClassifyResponse(
+            recognized=False,
+            message="Image not recognized. Please upload again.",
+            predicted_class=None,
+            category=None,
+            theme=None,
+            confidence=confidence_val,
+        )
+
     category = CATEGORY_MAP.get(predicted_class, "unknown")
     theme = THEME_LABELS.get(category, "Unknown")
 
     return ClassifyResponse(
+        recognized=True,
+        message="success",
         predicted_class=predicted_class,
         category=category,
         theme=theme,
-        confidence=round(confidence.item(), 4),
+        confidence=confidence_val,
     )
 
 
