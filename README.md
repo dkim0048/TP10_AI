@@ -29,7 +29,7 @@ The three modules in this repository address these needs through word difficulty
 ## Project Structure
 
 ```text
-main.py                                          # FastAPI inference server (word difficulty)
+main.py                                          # FastAPI inference server (word difficulty + image classification)
 requirements.txt
 word_difficulty_model/
 ├── data/                                        # AoA dataset
@@ -136,6 +136,8 @@ The word difficulty and image classification models are served via FastAPI.
 
 Rate limit: 60 requests per minute per IP.
 
+CORS: requests are accepted only from `https://dysletp10.vercel.app`.
+
 ### `GET /`
 
 Health check.
@@ -182,13 +184,29 @@ Maximum 100 words per request.
 
 Accepts a multipart image upload. Returns the predicted class, internal category, child-facing theme, and confidence score.
 
-**Response**
+Confidence threshold: 0.6. Responses below this threshold return `recognized: false` with null class fields.
+
+**Response (recognised)**
 ```json
 {
+  "recognized": true,
+  "message": "success",
   "predicted_class": "cat",
   "category": "animals",
   "theme": "Animals",
   "confidence": 0.9234
+}
+```
+
+**Response (not recognised)**
+```json
+{
+  "recognized": false,
+  "message": "Image not recognized. Please upload again.",
+  "predicted_class": null,
+  "category": null,
+  "theme": null,
+  "confidence": 0.4821
 }
 ```
 
