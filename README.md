@@ -31,6 +31,13 @@ The three modules in this repository address these needs through word difficulty
 ```text
 main.py                                          # FastAPI inference server (word difficulty + image classification)
 requirements.txt
+.python-version                                  # Python 3.11
+
+routers/
+├── word_difficulty.py                           # POST /predict, POST /predict/batch
+├── image_classification.py                      # POST /image/classify, GET /image/themes
+└── __init__.py
+
 word_difficulty_model/
 ├── data/                                        # AoA dataset
 ├── model/                                       # Trained model artifact (JSON)
